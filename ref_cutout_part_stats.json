@@ -1,0 +1,61 @@
+{
+  "source": "source\\ref.obj",
+  "output": "ref_cutout_part.obj",
+  "hemisphere": {
+    "center": [
+      -4.735506970343862e-09,
+      -4.735516867526712e-09,
+      5.999999992700245
+    ],
+    "radius": 15.099999995710167,
+    "equator_z": 6.0,
+    "fit_points": 6180,
+    "fit_residual_max_abs": 7.432270479057479e-07,
+    "fit_residual_std": 2.9446467336283785e-07,
+    "bottom_radius_modes": [
+      {
+        "radius": 15.1,
+        "count": 156
+      },
+      {
+        "radius": 19.1,
+        "count": 144
+      },
+      {
+        "radius": 21.5,
+        "count": 34
+      }
+    ],
+    "theoretical_hemisphere_volume": 7210.899706034015,
+    "theoretical_curved_surface_area": 1432.6290810760122
+  },
+  "selection": {
+    "surface_faces": 12202,
+    "surface_area": 1432.1507079005814,
+    "source_normal_dot_min": -0.9999996793049201,
+    "source_normal_dot_max": -0.9791539500233929,
+    "surface_z_min": 6.002517999999999,
+    "surface_z_max": 21.094253666666667
+  },
+  "mesh": {
+    "open_boundary_edges_before_cap": 156,
+    "open_boundary_vertices_before_cap": 156,
+    "cap_triangles": 156,
+    "signed_volume": 7206.081660319159,
+    "edges": 18537,
+    "boundary_edges": 0,
+    "nonmanifold_edges": 0,
+    "vertices": 6181,
+    "faces": 12358,
+    "bbox_min": [
+      -15.1,
+      -15.1,
+      6.0
+    ],
+    "bbox_max": [
+      15.1,
+      15.1,
+      21.09964
+    ]
+  }
+}

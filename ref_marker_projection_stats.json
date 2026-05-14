@@ -1,0 +1,62 @@
+{
+  "image": "ref.jpg",
+  "image_size_actual": [
+    640,
+    480
+  ],
+  "calibration": "calibration_new.cfg",
+  "image_size_in_calibration": [
+    640,
+    480
+  ],
+  "intrinsics_mode": "raw",
+  "intrinsics_scale": [
+    1.0,
+    1.0
+  ],
+  "camera_matrix_used": [
+    [
+      296.8122441947331,
+      0.0,
+      320.7969664678542
+    ],
+    [
+      0.0,
+      296.33788906687863,
+      218.67417109265838
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "sphere_center": [
+    0.0,
+    0.0,
+    6.0
+  ],
+  "sphere_radius": 15.1,
+  "marker_detection": {
+    "mode": "diff",
+    "value_threshold": 160,
+    "saturation_threshold": 80,
+    "diff_threshold": 120,
+    "diff_scale": 15.0,
+    "diff_large_kernel": 15,
+    "diff_small_kernel": 3,
+    "min_area": 3,
+    "max_area": 500,
+    "detected_markers": 25,
+    "valid_sphere_intersections": 25
+  },
+  "camera_origin_object_coordinates": [
+    -1.2770843744642841,
+    -0.10895247116231474,
+    -7.659576779327049
+  ],
+  "outputs": {
+    "csv": "ref_marker_points_3d.csv",
+    "debug_image": "ref_marker_detection.jpg"
+  }
+}
