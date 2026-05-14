@@ -204,14 +204,23 @@ def precompute_hemisphere_depth(width, height, calibration, sphere_center, spher
     return depth_filled, valid_mask, ray_origin, hit_points.reshape(height, width, 3)
 
 
-def match_markers_to_reference(reference_markers, current_markers, max_distance):
-    ref_pixels = np.array([[m["pixel_x"], m["pixel_y"]] for m in reference_markers], dtype=np.float64)
+def predicted_marker_pixels(reference_markers, pixel_state):
+    pixels = np.array([[m["pixel_x"], m["pixel_y"]] for m in reference_markers], dtype=np.float64)
+    if pixel_state is None:
+        return pixels
+    tracked = np.isfinite(pixel_state).all(axis=1)
+    pixels[tracked] = pixel_state[tracked]
+    return pixels
+
+
+def match_markers_to_reference(reference_markers, current_markers, max_distance, pixel_state=None):
+    target_pixels = predicted_marker_pixels(reference_markers, pixel_state)
     cur_pixels = np.array([[m["pixel_x"], m["pixel_y"]] for m in current_markers], dtype=np.float64)
     matches = {}
-    if len(ref_pixels) == 0 or len(cur_pixels) == 0:
+    if len(target_pixels) == 0 or len(cur_pixels) == 0:
         return matches
 
-    costs = np.linalg.norm(ref_pixels[:, None, :] - cur_pixels[None, :, :], axis=2)
+    costs = np.linalg.norm(target_pixels[:, None, :] - cur_pixels[None, :, :], axis=2)
     if linear_sum_assignment is not None:
         ref_ids, cur_ids = linear_sum_assignment(costs)
         pairs = zip(ref_ids, cur_ids)
@@ -234,6 +243,35 @@ def match_markers_to_reference(reference_markers, current_markers, max_distance)
         if distance <= max_distance:
             matches[int(ref_id)] = {**current_markers[int(cur_id)], "match_distance": distance}
     return matches
+
+
+def smooth_marker_matches(matches, pixel_state, alpha, max_pixel_step):
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    smoothed = {}
+    for marker_id, current in matches.items():
+        measurement = np.array([current["pixel_x"], current["pixel_y"]], dtype=np.float64)
+        previous = pixel_state[marker_id]
+        if np.any(np.isnan(previous)):
+            pixel_state[marker_id] = measurement
+        else:
+            if max_pixel_step > 0:
+                delta = measurement - previous
+                distance = float(np.linalg.norm(delta))
+                if distance > max_pixel_step:
+                    measurement = previous + delta * (max_pixel_step / distance)
+            pixel_state[marker_id] = (1.0 - alpha) * previous + alpha * measurement
+
+        copied = dict(current)
+        copied["raw_pixel_x"] = float(current["pixel_x"])
+        copied["raw_pixel_y"] = float(current["pixel_y"])
+        copied["pixel_x"] = float(pixel_state[marker_id, 0])
+        copied["pixel_y"] = float(pixel_state[marker_id, 1])
+        smoothed[marker_id] = copied
+    return smoothed
+
+
+def markers_from_matches(matches):
+    return [matches[idx] for idx in sorted(matches)]
 
 
 def project_points(points, calibration):
@@ -377,25 +415,119 @@ def colorize_signed(values, valid_mask, limit):
     return color
 
 
-def draw_markers(image, markers):
+def draw_markers(image, markers, show_ids):
     output = image.copy()
     for idx, marker in enumerate(markers):
         center = (int(round(marker["pixel_x"])), int(round(marker["pixel_y"])))
-        cv2.circle(output, center, 5, (0, 220, 0), 1)
-        cv2.putText(
-            output,
-            str(idx),
-            (center[0] + 7, center[1] - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (0, 220, 0),
-            1,
-            cv2.LINE_AA,
-        )
+        cv2.circle(output, center, 4, (0, 230, 0), 1)
+        cv2.circle(output, center, 1, (0, 255, 0), -1)
+        if show_ids:
+            cv2.putText(
+                output,
+                str(idx),
+                (center[0] + 6, center[1] - 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (0, 230, 0),
+                1,
+                cv2.LINE_AA,
+            )
     return output
 
 
-def save_outputs(prefix, frame, marker_mask, depth, depth_view, deformation=None, deformation_view=None):
+def panel_image(image, title, size):
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    output = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+    cv2.rectangle(output, (0, 0), (size[0], 26), (0, 0, 0), -1)
+    cv2.putText(output, title, (10, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+    return output
+
+
+def add_inset(panel, inset, title):
+    h, w = panel.shape[:2]
+    inset_w = max(120, int(w * 0.32))
+    inset_h = max(90, int(h * 0.32))
+    inset_view = cv2.resize(inset, (inset_w, inset_h), interpolation=cv2.INTER_AREA)
+    x0 = w - inset_w - 12
+    y0 = h - inset_h - 12
+    cv2.rectangle(panel, (x0 - 2, y0 - 24), (x0 + inset_w + 2, y0 + inset_h + 2), (0, 0, 0), -1)
+    panel[y0 : y0 + inset_h, x0 : x0 + inset_w] = inset_view
+    cv2.rectangle(panel, (x0, y0), (x0 + inset_w, y0 + inset_h), (230, 230, 230), 1)
+    cv2.putText(panel, title, (x0, y0 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (230, 230, 230), 1, cv2.LINE_AA)
+    return panel
+
+
+def compose_dashboard(
+    marker_view,
+    marker_mask,
+    depth_view,
+    deformation_view,
+    candidate_count,
+    used_markers_count,
+    matches_count,
+    expected_markers,
+    marker_delta,
+    marker_valid,
+    panel_size,
+    show_deformation_panel,
+    show_deformation_inset,
+    fps,
+):
+    mask_panel = cv2.cvtColor(marker_mask, cv2.COLOR_GRAY2BGR)
+    depth_panel = panel_image(depth_view, "marker removed depth", panel_size)
+    if show_deformation_inset and not show_deformation_panel:
+        depth_panel = add_inset(depth_panel, deformation_view, "deformation")
+
+    panels = [
+        panel_image(marker_view, "raw + markers", panel_size),
+        panel_image(mask_panel, "marker mask", panel_size),
+        depth_panel,
+    ]
+    if show_deformation_panel:
+        panels.append(panel_image(deformation_view, "live deformation", panel_size))
+
+    if show_deformation_panel:
+        top = np.hstack(panels[:2])
+        bottom = np.hstack(panels[2:])
+        body = np.vstack([top, bottom])
+    else:
+        body = np.hstack(panels)
+
+    status_h = 34
+    dashboard = np.zeros((body.shape[0] + status_h, body.shape[1], 3), dtype=np.uint8)
+    dashboard[status_h:, :] = body
+
+    if np.any(marker_valid):
+        dz_min = float(marker_delta[marker_valid].min())
+        dz_max = float(marker_delta[marker_valid].max())
+    else:
+        dz_min = 0.0
+        dz_max = 0.0
+
+    status_color = (0, 220, 0) if matches_count == expected_markers else (0, 180, 255)
+    status = (
+        f"blobs {candidate_count}  "
+        f"used {used_markers_count}/{expected_markers}  "
+        f"matched {matches_count}/{expected_markers}  "
+        f"dz {dz_min:+.3f}..{dz_max:+.3f}  "
+        f"fps {fps:4.1f}  "
+        "r: reset  i: ids  s: save  q/esc: quit"
+    )
+    cv2.putText(dashboard, status, (12, 23), cv2.FONT_HERSHEY_SIMPLEX, 0.58, status_color, 1, cv2.LINE_AA)
+    return dashboard
+
+
+def save_outputs(
+    prefix,
+    frame,
+    marker_mask,
+    depth,
+    depth_view,
+    deformation=None,
+    deformation_view=None,
+    dashboard=None,
+):
     cv2.imwrite(f"{prefix}_frame.jpg", frame)
     cv2.imwrite(f"{prefix}_marker_mask.png", marker_mask)
     cv2.imwrite(f"{prefix}_depth_marker_removed.png", depth_view)
@@ -404,6 +536,8 @@ def save_outputs(prefix, frame, marker_mask, depth, depth_view, deformation=None
         np.save(f"{prefix}_deformation.npy", deformation)
     if deformation_view is not None:
         cv2.imwrite(f"{prefix}_deformation.png", deformation_view)
+    if dashboard is not None:
+        cv2.imwrite(f"{prefix}_dashboard.jpg", dashboard)
 
 
 def main():
@@ -416,23 +550,25 @@ def main():
     parser.add_argument("--sphere-radius", type=float, default=15.1)
     parser.add_argument("--reference-markers", default="ref_marker_points_3d.csv")
     parser.add_argument("--expected-markers", type=int, default=25)
-    parser.add_argument("--max-match-distance", type=float, default=80.0)
+    parser.add_argument("--max-match-distance", type=float, default=35.0)
     parser.add_argument("--live-depth-source", choices=["markers", "model"], default="markers")
     parser.add_argument("--max-normal-displacement", type=float, default=5.0)
-    parser.add_argument("--deadzone", type=float, default=0.02)
+    parser.add_argument("--deadzone", type=float, default=0.05)
+    parser.add_argument("--marker-pixel-alpha", type=float, default=0.45)
+    parser.add_argument("--max-marker-pixel-step", type=float, default=14.0)
     parser.add_argument("--idw-power", type=float, default=2.0)
-    parser.add_argument("--deformation-smooth-sigma", type=float, default=1.0)
-    parser.add_argument("--temporal-alpha", type=float, default=0.45)
+    parser.add_argument("--deformation-smooth-sigma", type=float, default=1.1)
+    parser.add_argument("--temporal-alpha", type=float, default=0.4)
     parser.add_argument("--deformation-display-limit", type=float, default=2.0)
     parser.add_argument("--depth-mode", choices=["height", "object-z", "camera-z", "camera-range"], default="height")
     parser.add_argument("--diff-threshold", type=int, default=120)
     parser.add_argument("--diff-scale", type=float, default=15.0)
     parser.add_argument("--diff-large-kernel", type=int, default=15)
     parser.add_argument("--diff-small-kernel", type=int, default=3)
-    parser.add_argument("--min-area", type=int, default=3)
-    parser.add_argument("--max-area", type=int, default=500)
-    parser.add_argument("--mask-radius", type=int, default=9)
-    parser.add_argument("--mask-padding", type=int, default=5)
+    parser.add_argument("--min-area", type=int, default=20)
+    parser.add_argument("--max-area", type=int, default=420)
+    parser.add_argument("--mask-radius", type=int, default=7)
+    parser.add_argument("--mask-padding", type=int, default=3)
     parser.add_argument("--mask-dilate-iterations", type=int, default=0)
     parser.add_argument(
         "--depth-repair-mode",
@@ -444,6 +580,11 @@ def main():
     parser.add_argument("--smooth-kernel", type=int, default=41)
     parser.add_argument("--feather-sigma", type=float, default=2.5)
     parser.add_argument("--output-prefix", default="live_depth")
+    parser.add_argument("--panel-width", type=int, default=400)
+    parser.add_argument("--panel-height", type=int, default=300)
+    parser.add_argument("--show-deformation-panel", action="store_true")
+    parser.add_argument("--hide-deformation-inset", action="store_true")
+    parser.add_argument("--show-marker-ids", action="store_true")
     parser.add_argument("--once", action="store_true", help="Capture one frame, save outputs, and exit.")
     parser.add_argument("--no-window", action="store_true", help="Do not open realtime display windows.")
     args = parser.parse_args()
@@ -480,6 +621,7 @@ def main():
     depth_min = float(depth_valid.min())
     depth_max = float(depth_valid.max())
     deformation_state = np.zeros_like(base_depth, dtype=np.float32)
+    marker_pixel_state = np.full((args.expected_markers, 2), np.nan, dtype=np.float64)
 
     cap = cv2.VideoCapture(args.camera_index, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -489,15 +631,28 @@ def main():
     cap.set(cv2.CAP_PROP_FPS, 30)
 
     last_save = None
+    show_marker_ids = args.show_marker_ids
+    fps = 0.0
+    last_frame_time = None
     try:
         while True:
+            now = time.perf_counter()
+            if last_frame_time is None:
+                frame_dt = None
+            else:
+                frame_dt = max(now - last_frame_time, 1e-6)
+            last_frame_time = now
+            if frame_dt is not None:
+                instant_fps = 1.0 / frame_dt
+                fps = instant_fps if fps <= 0.0 else 0.9 * fps + 0.1 * instant_fps
+
             ok, frame = cap.read()
             if not ok or frame is None:
                 raise RuntimeError("Camera opened but returned no frame")
             if frame.shape[1] != args.width or frame.shape[0] != args.height:
                 frame = cv2.resize(frame, (args.width, args.height), interpolation=cv2.INTER_AREA)
 
-            markers, detect_mask, marker_mask = detect_marker_mask(
+            markers, detect_mask, _ = detect_marker_mask(
                 frame,
                 args.diff_threshold,
                 args.diff_scale,
@@ -509,18 +664,29 @@ def main():
                 args.mask_padding,
                 args.mask_dilate_iterations,
             )
-            markers = keep_expected_marker_count(markers, args.expected_markers)
+            matches = match_markers_to_reference(
+                reference_markers,
+                markers,
+                args.max_match_distance,
+                marker_pixel_state,
+            )
+            smoothed_matches = smooth_marker_matches(
+                matches,
+                marker_pixel_state,
+                args.marker_pixel_alpha,
+                args.max_marker_pixel_step,
+            )
+            display_markers = markers_from_matches(smoothed_matches) if smoothed_matches else []
             marker_mask = build_removal_mask(
                 frame.shape,
-                markers,
+                display_markers,
                 args.mask_radius,
                 args.mask_padding,
                 args.mask_dilate_iterations,
             )
-            matches = match_markers_to_reference(reference_markers, markers, args.max_match_distance)
             marker_delta, marker_valid = estimate_marker_displacements(
                 reference_markers,
-                matches,
+                smoothed_matches,
                 calibration,
                 args.sphere_center,
                 args.sphere_radius,
@@ -565,27 +731,23 @@ def main():
                 valid_mask,
                 args.deformation_display_limit,
             )
-            marker_view = draw_markers(frame, markers)
+            marker_view = draw_markers(frame, display_markers, show_marker_ids)
 
-            cv2.putText(
+            dashboard = compose_dashboard(
                 marker_view,
-                f"markers: {len(markers)}",
-                (12, 24),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                marker_view,
-                f"matched: {len(matches)}",
-                (12, 52),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0) if len(matches) == args.expected_markers else (0, 180, 255),
-                2,
-                cv2.LINE_AA,
+                depth_marker_mask,
+                depth_view,
+                deformation_view,
+                len(markers),
+                len(display_markers),
+                len(smoothed_matches),
+                args.expected_markers,
+                marker_delta,
+                marker_valid,
+                (args.panel_width, args.panel_height),
+                args.show_deformation_panel,
+                not args.hide_deformation_inset,
+                fps,
             )
 
             if args.once:
@@ -597,10 +759,12 @@ def main():
                     depth_view,
                     deformation_state,
                     deformation_view,
+                    dashboard,
                 )
                 stats = {
-                    "markers": len(markers),
-                    "matched_markers": len(matches),
+                    "candidate_blobs": len(markers),
+                    "markers": len(display_markers),
+                    "matched_markers": len(smoothed_matches),
                     "valid_marker_displacements": int(np.count_nonzero(marker_valid)),
                     "live_depth_source": args.live_depth_source,
                     "depth_mode": args.depth_mode,
@@ -612,6 +776,9 @@ def main():
                     "mask_radius": args.mask_radius,
                     "mask_padding": args.mask_padding,
                     "mask_dilate_iterations": args.mask_dilate_iterations,
+                    "marker_pixel_alpha": args.marker_pixel_alpha,
+                    "temporal_alpha": args.temporal_alpha,
+                    "deadzone": args.deadzone,
                     "camera_origin_object_coordinates": camera_origin.tolist(),
                     "saved_prefix": args.output_prefix,
                 }
@@ -620,20 +787,20 @@ def main():
                 break
 
             if not args.no_window:
-                cv2.imshow("raw + markers", marker_view)
-                cv2.imshow("marker mask on depth", depth_marker_mask)
-                cv2.imshow("marker removed depth", depth_view)
-                cv2.imshow("live deformation", deformation_view)
+                cv2.imshow("live marker depth", dashboard)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     break
+                if key == ord("i"):
+                    show_marker_ids = not show_marker_ids
                 if key == ord("r"):
-                    if len(matches) == args.expected_markers:
-                        reference_markers = reset_reference_pixels(reference_markers, matches)
+                    if len(smoothed_matches) == args.expected_markers:
+                        reference_markers = reset_reference_pixels(reference_markers, smoothed_matches)
                         deformation_state.fill(0.0)
+                        marker_pixel_state[:] = np.nan
                         print("reference marker pixels reset from current frame")
                     else:
-                        print(f"reference reset skipped: matched {len(matches)}/{args.expected_markers}")
+                        print(f"reference reset skipped: matched {len(smoothed_matches)}/{args.expected_markers}")
                 if key == ord("s"):
                     stamp = time.strftime("%Y%m%d_%H%M%S")
                     last_save = f"{args.output_prefix}_{stamp}"
@@ -645,6 +812,7 @@ def main():
                         depth_view,
                         deformation_state,
                         deformation_view,
+                        dashboard,
                     )
                     print(f"saved {last_save}_*.png/jpg/npy")
             else:
