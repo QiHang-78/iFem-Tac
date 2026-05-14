@@ -528,6 +528,10 @@ def save_outputs(
     deformation_view=None,
     dashboard=None,
 ):
+    output_dir = Path(prefix).parent
+    if output_dir != Path("."):
+        output_dir.mkdir(parents=True, exist_ok=True)
+
     cv2.imwrite(f"{prefix}_frame.jpg", frame)
     cv2.imwrite(f"{prefix}_marker_mask.png", marker_mask)
     cv2.imwrite(f"{prefix}_depth_marker_removed.png", depth_view)
@@ -543,12 +547,12 @@ def save_outputs(
 def main():
     parser = argparse.ArgumentParser(description="Live marker-removed depth map for the calibrated hemisphere.")
     parser.add_argument("--camera-index", type=int, default=0)
-    parser.add_argument("--calibration", default="calibration_new.cfg")
+    parser.add_argument("--calibration", default="config/calibration_new.cfg")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--sphere-center", nargs=3, type=float, default=[0.0, 0.0, 6.0])
     parser.add_argument("--sphere-radius", type=float, default=15.1)
-    parser.add_argument("--reference-markers", default="ref_marker_points_3d.csv")
+    parser.add_argument("--reference-markers", default="data/reference/ref_marker_points_3d.csv")
     parser.add_argument("--expected-markers", type=int, default=25)
     parser.add_argument("--max-match-distance", type=float, default=35.0)
     parser.add_argument("--live-depth-source", choices=["markers", "model"], default="markers")
@@ -579,7 +583,7 @@ def main():
     parser.add_argument("--inpaint-radius", type=float, default=5.0)
     parser.add_argument("--smooth-kernel", type=int, default=41)
     parser.add_argument("--feather-sigma", type=float, default=2.5)
-    parser.add_argument("--output-prefix", default="live_depth")
+    parser.add_argument("--output-prefix", default="test_logs/live_depth")
     parser.add_argument("--panel-width", type=int, default=400)
     parser.add_argument("--panel-height", type=int, default=300)
     parser.add_argument("--show-deformation-panel", action="store_true")

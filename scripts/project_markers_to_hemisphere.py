@@ -171,11 +171,11 @@ def write_csv(path, markers, points3d, valid):
 
 def main():
     parser = argparse.ArgumentParser(description="Detect white markers and project them onto the recovered hemisphere.")
-    parser.add_argument("--image", default="ref.jpg")
-    parser.add_argument("--calibration", default="calibration_new.cfg")
-    parser.add_argument("--csv", default="ref_marker_points_3d.csv")
-    parser.add_argument("--debug-image", default="ref_marker_detection.jpg")
-    parser.add_argument("--stats", default="ref_marker_projection_stats.json")
+    parser.add_argument("--image", default="data/reference/ref.jpg")
+    parser.add_argument("--calibration", default="config/calibration_new.cfg")
+    parser.add_argument("--csv", default="data/reference/ref_marker_points_3d.csv")
+    parser.add_argument("--debug-image", default="data/reference/ref_marker_detection.jpg")
+    parser.add_argument("--stats", default="data/reference/ref_marker_projection_stats.json")
     parser.add_argument("--sphere-center", nargs=3, type=float, default=[0.0, 0.0, 6.0])
     parser.add_argument("--sphere-radius", type=float, default=15.1)
     parser.add_argument("--detection-mode", choices=["diff", "hsv"], default="diff")

@@ -198,8 +198,12 @@ def build_closed_hemisphere(vertices, triangles, selected, hemi):
 
 
 def write_obj(path, vertices, faces, stats):
-    with Path(path).open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("# Recovered hemispherical cut-out from source/ref.obj\n")
+    output_path = Path(path)
+    if output_path.parent != Path("."):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("# Recovered hemispherical cut-out from data/source/ref.obj\n")
         handle.write(f"# sphere_center {' '.join(f'{v:.6f}' for v in stats['hemisphere']['center'])}\n")
         handle.write(f"# sphere_radius {stats['hemisphere']['radius']:.6f}\n")
         handle.write("o recovered_hemisphere_cutout\n")
@@ -211,10 +215,10 @@ def write_obj(path, vertices, faces, stats):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Recover the hemispherical cut-out from source/ref.obj.")
-    parser.add_argument("input", nargs="?", default="source/ref.obj")
-    parser.add_argument("-o", "--output", default="ref_cutout_part.obj")
-    parser.add_argument("--stats", default="ref_cutout_part_stats.json")
+    parser = argparse.ArgumentParser(description="Recover the hemispherical cut-out from data/source/ref.obj.")
+    parser.add_argument("input", nargs="?", default="data/source/ref.obj")
+    parser.add_argument("-o", "--output", default="data/reference/ref_cutout_part.obj")
+    parser.add_argument("--stats", default="data/reference/ref_cutout_part_stats.json")
     args = parser.parse_args()
 
     vertices, triangles = load_obj(args.input)
@@ -250,7 +254,10 @@ def main():
     }
 
     write_obj(args.output, out_vertices, out_faces, stats)
-    Path(args.stats).write_text(json.dumps(stats, indent=2), encoding="utf-8")
+    stats_path = Path(args.stats)
+    if stats_path.parent != Path("."):
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+    stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
     print(json.dumps(stats, indent=2))
 
 
